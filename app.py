@@ -1155,7 +1155,7 @@ elif selected == "Checkout" and get_item_aktif() is not None:
             if not sudah_konfirmasi:
                 st.info("👈 Silakan tentukan jumlah pesanan di sebelah kiri lalu klik tombol **Konfirmasi Pesanan** untuk memunculkan kode barcode QRIS.")
             
-           elif status_pembayaran == "Menunggu Pembayaran":
+            elif status_pembayaran == "Menunggu Pembayaran":
                 id_trx = st.session_state.transaksi_aktif_id
                 url_webhook_scan = f"https://go-adventure.streamlit.app/?bayar_id={id_trx}"
                 url_qr = f"https://api.qrserver.com/v1/create-qr-code/?size=230x230&data={url_webhook_scan}"
