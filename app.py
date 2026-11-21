@@ -1157,8 +1157,7 @@ elif selected == "Checkout" and get_item_aktif() is not None:
             
             elif status_pembayaran == "Menunggu Pembayaran":
                 id_trx = st.session_state.transaksi_aktif_id
-                ip_laptop = dapatkan_ip_lokal()
-                url_webhook_scan = f"http://{ip_laptop}:8501/?bayar_id={id_trx}"
+               url_webhook_scan = f"https://https://go-adventure.streamlit.app/?bayar_id={id_trx}"
                 url_qr = f"https://api.qrserver.com/v1/create-qr-code/?size=230x230&data={url_webhook_scan}"
                 
                 st.markdown("<p style='text-align: center; font-weight: bold; color: #1B5E20; margin-bottom: 5px;'>SCAN BARCODE QRIS GO ADVENTURE</p>", unsafe_allow_html=True)
