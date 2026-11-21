@@ -1155,9 +1155,9 @@ elif selected == "Checkout" and get_item_aktif() is not None:
             if not sudah_konfirmasi:
                 st.info("👈 Silakan tentukan jumlah pesanan di sebelah kiri lalu klik tombol **Konfirmasi Pesanan** untuk memunculkan kode barcode QRIS.")
             
-            elif status_pembayaran == "Menunggu Pembayaran":
+           elif status_pembayaran == "Menunggu Pembayaran":
                 id_trx = st.session_state.transaksi_aktif_id
-               url_webhook_scan = f"https://https://go-adventure.streamlit.app/?bayar_id={id_trx}"
+                url_webhook_scan = f"https://go-adventure.streamlit.app/?bayar_id={id_trx}"
                 url_qr = f"https://api.qrserver.com/v1/create-qr-code/?size=230x230&data={url_webhook_scan}"
                 
                 st.markdown("<p style='text-align: center; font-weight: bold; color: #1B5E20; margin-bottom: 5px;'>SCAN BARCODE QRIS GO ADVENTURE</p>", unsafe_allow_html=True)
@@ -1166,8 +1166,8 @@ elif selected == "Checkout" and get_item_aktif() is not None:
                 with col_q2:
                     st.image(url_qr, caption=f"ID Pesanan: #{id_trx} • Rp {total_bayar:,}", use_container_width=True)
                     
-                st.info("🔄 **Menunggu pembayaran masuk...** Scan barcode QRIS di atas menggunakan kamera HP (1 Wi-Fi). Barcode akan **otomatis menghilang** begitu pembayaran masuk!")
-                st.caption(f"💡 *Simulasi tes di 1 layar laptop: [Klik link ini untuk simulasi hasil scan QRIS](?bayar_id={id_trx})*")
+                st.info("🔄 **Menunggu pembayaran masuk...** Scan barcode QRIS di atas menggunakan kamera HP. Barcode akan **otomatis menghilang** begitu pembayaran masuk!")
+                st.caption(f"💡 *Simulasi tes di 1 layar: [Klik link ini untuk simulasi hasil scan QRIS](?bayar_id={id_trx})*")
                 
                 time.sleep(2)
                 st.rerun()
