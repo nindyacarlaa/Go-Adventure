@@ -43,7 +43,33 @@ def ambil_konteks_wisata(_koneksi_db):
         return teks
     except Exception:
         return "Data katalog sedang tidak dapat diakses."
-
+@st.cache_data(ttl=3600)
+def dapatkan_model_aktif(api_key):
+    kandidat = [
+        "llama-3.3-70b-versatile",
+        "openai/gpt-oss-20b",
+        "qwen/qwen3-32b",
+        "gemma2-9b-it",
+        "mixtral-8x7b-32768"
+    ]
+    try:
+        res = requests.get(
+            "https://api.groq.com/openai/v1/models",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=10
+        )
+        if res.status_code == 200:
+            daftar_api = [m["id"] for m in res.json().get("data", [])]
+            for m in kandidat:
+                if m in daftar_api:
+                    return m
+            kata_terlarang = ["whisper", "orpheus", "guard", "tts", "audio", "vision", "embed"]
+            for m_id in daftar_api:
+                if not any(bad in m_id.lower() for bad in kata_terlarang):
+                    return m_id
+    except Exception:
+        pass
+    return "llama-3.3-70b-versatile"
 def stream_groq_ai(riwayat_chat, koneksi_db):
     key = get_groq_api_key()
     if not key or "MASUKKAN_API_KEY" in key:
@@ -66,8 +92,9 @@ def stream_groq_ai(riwayat_chat, koneksi_db):
     for msg in riwayat_chat[-6:]:
         messages_payload.append({"role": msg["role"], "content": msg["content"]})
 
+  model_aktif = dapatkan_model_aktif(key)
+
     try:
-        # Langsung panggil model cepat dengan mode stream=True (tanpa request GET /models lagi)
         with requests.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={
@@ -75,7 +102,7 @@ def stream_groq_ai(riwayat_chat, koneksi_db):
                 "Content-Type": "application/json"
             },
             json={
-                "model": "llama-3.1-8b-instant",
+                "model": model_aktif,
                 "messages": messages_payload,
                 "temperature": 0.6,
                 "max_tokens": 800,
