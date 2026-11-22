@@ -934,17 +934,12 @@ elif selected == "Tambah Produk":
 # ==========================================
 elif selected == "Detail" and get_item_aktif() is not None:
     item = get_item_aktif()
-    # HAPUS baris ini:
-# rata_rating, jml_ulasan = hitung_rating_db(item["id"])
-# teks_rating = format_teks_rating(rata_rating, jml_ulasan)
-
-# GANTI menjadi:
-teks_rating = format_teks_rating(item.get("rata_rating", 0), item.get("jml_ulasan", 0))
+    teks_rating = format_teks_rating(item.get("rata_rating", 0), item.get("jml_ulasan", 0))
+    
     if st.button("⬅️ Kembali ke Daftar Katalog"):
         st.session_state.halaman = "Paket Trip" if item["kategori"] == "Open Trip" else "Tiket Wisata"
         st.session_state.item_detail_id = None
         st.rerun()
-        
     st.divider()
     
     col_img, col_info = st.columns([1.2, 1.5])
