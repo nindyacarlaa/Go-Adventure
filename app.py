@@ -164,6 +164,9 @@ st.markdown("""
 # ==========================================
 # KONEKSI DATABASE & FUNGSI BANTUAN
 # ==========================================
+# ==========================================
+# KONEKSI DATABASE & FUNGSI BANTUAN (OPTIMASI CACHE)
+# ==========================================
 def koneksi_db():
     return mysql.connector.connect(
         host="mysql-goadventure-godventure.a.aivencloud.com",
@@ -171,19 +174,16 @@ def koneksi_db():
         user="avnadmin",
         password="AVNS_tP2Gx9VWqkuyR3whVLE",
         database="defaultdb",
-        ssl_ca="ca.pem"
+        ssl_ca="ca.pem",
+        connection_timeout=10
     )
 
-def dapatkan_ip_lokal():
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except Exception:
-        return "localhost"
-
+# Fungsi pembersih cache saat Admin menambah/edit/hapus data
+def reset_cache_katalog():
+    ambil_semua_katalog.clear()
+    ambil_daftar_jenis_alam.clear()
+    reset_cache_katalog()
+    ambil_detail_item_db.clear()
 def ambil_gambar(path_foto):
     if path_foto and os.path.exists(path_foto):
         return path_foto
@@ -280,33 +280,31 @@ if not st.session_state.admin_login and st.query_params.get("role") == "admin":
 # ==========================================
 # FUNGSI AMBIL DATA KATALOG, RATING & KATEGORI DINAMIS
 # ==========================================
-def hitung_rating_db(katalog_id):
-    try:
-        conn = koneksi_db()
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT AVG(skor) as rata, COUNT(*) as jml FROM ulasan WHERE katalog_id = %s", (katalog_id,))
-        res = cursor.fetchone()
-        cursor.close()
-        conn.close()
-        if res and res["jml"] and int(res["jml"]) > 0:
-            return round(float(res["rata"]), 1), int(res["jml"])
-        return 0.0, 0
-    except Exception:
-        return 0.0, 0
-
+# ==========================================
+# FUNGSI AMBIL DATA KATALOG, RATING & KATEGORI DINAMIS (1X QUERY + CACHE)
+# ==========================================
 def format_teks_rating(rata_rating, jml_ulasan):
-    if jml_ulasan == 0:
+    if not jml_ulasan or int(jml_ulasan) == 0:
         return "Belum ada rating"
-    return f"⭐ {rata_rating} ({jml_ulasan} ulasan)"
+    return f"⭐ {round(float(rata_rating), 1)} ({int(jml_ulasan)} ulasan)"
 
+@st.cache_data(ttl=300)
 def ambil_semua_katalog(kategori_filter=None):
     try:
         conn = koneksi_db()
         cursor = conn.cursor(dictionary=True)
+        # Gabungkan query katalog + rata-rata rating sekaligus (tidak buka tutup koneksi per kartu!)
+        base_sql = """
+            SELECT k.*, 
+                   COALESCE(AVG(u.skor), 0) as rata_rating, 
+                   COUNT(u.id) as jml_ulasan
+            FROM katalog k
+            LEFT JOIN ulasan u ON k.id = u.katalog_id
+        """
         if kategori_filter:
-            cursor.execute("SELECT * FROM katalog WHERE kategori = %s ORDER BY id DESC", (kategori_filter,))
+            cursor.execute(base_sql + " WHERE k.kategori = %s GROUP BY k.id ORDER BY k.id DESC", (kategori_filter,))
         else:
-            cursor.execute("SELECT * FROM katalog ORDER BY id DESC")
+            cursor.execute(base_sql + " GROUP BY k.id ORDER BY k.id DESC")
         data = cursor.fetchall()
         cursor.close()
         conn.close()
@@ -316,14 +314,11 @@ def ambil_semua_katalog(kategori_filter=None):
         return []
 
 def ambil_katalog_populer_beranda():
-    semua = ambil_semua_katalog()
-    for item in semua:
-        rata, jml = hitung_rating_db(item["id"])
-        item["rata_rating"] = rata
-        item["jml_ulasan"] = jml
-    semua.sort(key=lambda x: (x["rata_rating"], x["jml_ulasan"]), reverse=True)
+    semua = list(ambil_semua_katalog())
+    semua.sort(key=lambda x: (float(x.get("rata_rating", 0)), int(x.get("jml_ulasan", 0))), reverse=True)
     return semua
 
+@st.cache_data(ttl=300)
 def ambil_daftar_jenis_alam(kategori_filter=None):
     dasar = ["Semua", "Gunung", "Pantai", "Curug & Camp"]
     try:
@@ -344,19 +339,27 @@ def ambil_daftar_jenis_alam(kategori_filter=None):
         pass
     return dasar
 
-def get_item_aktif():
-    if st.session_state.item_detail_id is None:
-        return None
+@st.cache_data(ttl=300)
+def ambil_detail_item_db(item_id):
     try:
         conn = koneksi_db()
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT * FROM katalog WHERE id = %s", (st.session_state.item_detail_id,))
+        cursor.execute("""
+            SELECT k.*, COALESCE(AVG(u.skor), 0) as rata_rating, COUNT(u.id) as jml_ulasan
+            FROM katalog k LEFT JOIN ulasan u ON k.id = u.katalog_id
+            WHERE k.id = %s GROUP BY k.id
+        """, (item_id,))
         item = cursor.fetchone()
         cursor.close()
         conn.close()
         return item
     except Exception:
         return None
+
+def get_item_aktif():
+    if st.session_state.item_detail_id is None:
+        return None
+    return ambil_detail_item_db(st.session_state.item_detail_id)
 
 # ==========================================
 # SIDEBAR NAVIGASI (TOMBOL LOGIN DI PALING ATAS KANAN SEBELUM <<)
@@ -499,8 +502,12 @@ def render_grid_kartu(items, kunci_unik):
         for j in range(2):
             if i + j < len(items):
                 item = items[i + j]
-                rata_rating, jml_ulasan = hitung_rating_db(item["id"])
-                teks_rating = format_teks_rating(rata_rating, jml_ulasan)
+               # HAPUS baris ini:
+# rata_rating, jml_ulasan = hitung_rating_db(item["id"])
+# teks_rating = format_teks_rating(rata_rating, jml_ulasan)
+
+# GANTI menjadi:
+teks_rating = format_teks_rating(item.get("rata_rating", 0), item.get("jml_ulasan", 0))
                 
                 with cols[j]:
                     with st.container(border=True):
@@ -545,6 +552,7 @@ def render_grid_kartu(items, kunci_unik):
                                         cursor.close()
                                         conn.close()
                                         st.warning(f"Produk '{item['nama']}' berhasil dihapus!")
+                                        reset_cache_katalog()
                                         st.rerun()
                                     except Exception as e:
                                         st.error(f"Gagal menghapus: {e}")
@@ -600,6 +608,7 @@ def render_grid_kartu(items, kunci_unik):
                                             conn.close()
                                             st.session_state.edit_item_id = None
                                             st.success("Perubahan disimpan!")
+                                            reset_cache_katalog()
                                             st.rerun()
                                         except Exception as e:
                                             st.error(f"Gagal update: {e}")
@@ -819,6 +828,7 @@ elif selected == "Paket Trip":
             if st.button("➕ Tambah Open Trip Baru", type="primary", use_container_width=True):
                 st.session_state.jenis_tambah_baru = "Open Trip"
                 st.session_state.halaman = "Tambah Produk"
+                reset_cache_katalog()
                 st.rerun()
                 
     tampilkan_katalog_lengkap("Open Trip", "opentrip")
@@ -835,6 +845,7 @@ elif selected == "Tiket Wisata":
             if st.button("➕ Tambah Tiket Wisata Baru", type="primary", use_container_width=True):
                 st.session_state.jenis_tambah_baru = "Tiket Wisata"
                 st.session_state.halaman = "Tambah Produk"
+                reset_cache_katalog()
                 st.rerun()
                 
     tampilkan_katalog_lengkap("Tiket Wisata", "tiket")
@@ -932,9 +943,12 @@ elif selected == "Tambah Produk":
 # ==========================================
 elif selected == "Detail" and get_item_aktif() is not None:
     item = get_item_aktif()
-    rata_rating, jml_ulasan = hitung_rating_db(item["id"])
-    teks_rating = format_teks_rating(rata_rating, jml_ulasan)
-    
+    # HAPUS baris ini:
+# rata_rating, jml_ulasan = hitung_rating_db(item["id"])
+# teks_rating = format_teks_rating(rata_rating, jml_ulasan)
+
+# GANTI menjadi:
+teks_rating = format_teks_rating(item.get("rata_rating", 0), item.get("jml_ulasan", 0))
     if st.button("⬅️ Kembali ke Daftar Katalog"):
         st.session_state.halaman = "Paket Trip" if item["kategori"] == "Open Trip" else "Tiket Wisata"
         st.session_state.item_detail_id = None
@@ -1432,4 +1446,8 @@ elif selected == "Dashboard Admin":
             st.error(f"Gagal memuat daftar pesanan: {e}")
 
 # Panggil Floating AI Assistant di pojok kiri bawah
-tampilkan_chatbot_mengambang(koneksi_db)
+@st.fragment
+def jalankan_chatbot():
+    tampilkan_chatbot_mengambang(koneksi_db)
+
+jalankan_chatbot()
