@@ -493,21 +493,12 @@ if st.session_state.user_login is not None:
 # FUNGSI TAMPILAN KARTU KATALOG (EDIT ABU & HAPUS MERAH BAGI ADMIN)
 # ==========================================
 def render_grid_kartu(items, kunci_unik):
-    if not items:
-        st.warning("maaf kami belum menyediakan layanan ini")
-        return
-
-    for i in range(0, len(items), 2):
+   for i in range(0, len(items), 2):
         cols = st.columns(2)
         for j in range(2):
             if i + j < len(items):
                 item = items[i + j]
-               # HAPUS baris ini:
-# rata_rating, jml_ulasan = hitung_rating_db(item["id"])
-# teks_rating = format_teks_rating(rata_rating, jml_ulasan)
-
-# GANTI menjadi:
-teks_rating = format_teks_rating(item.get("rata_rating", 0), item.get("jml_ulasan", 0))
+                teks_rating = format_teks_rating(item.get("rata_rating", 0), item.get("jml_ulasan", 0))
                 
                 with cols[j]:
                     with st.container(border=True):
