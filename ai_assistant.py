@@ -19,7 +19,6 @@ def get_base64_image(image_path):
             return base64.b64encode(img_file.read()).decode()
     return None
 
-# Cache data katalog wisata selama 5 menit agar AI tidak query MySQL tiap kali chat
 @st.cache_data(ttl=300)
 def ambil_konteks_wisata(_koneksi_db):
     try:
@@ -43,6 +42,7 @@ def ambil_konteks_wisata(_koneksi_db):
         return teks
     except Exception:
         return "Data katalog sedang tidak dapat diakses."
+
 @st.cache_data(ttl=3600)
 def dapatkan_model_aktif(api_key):
     kandidat = [
@@ -70,6 +70,7 @@ def dapatkan_model_aktif(api_key):
     except Exception:
         pass
     return "llama-3.3-70b-versatile"
+
 def stream_groq_ai(riwayat_chat, koneksi_db):
     key = get_groq_api_key()
     if not key or "MASUKKAN_API_KEY" in key:
@@ -83,7 +84,7 @@ def stream_groq_ai(riwayat_chat, koneksi_db):
         f"{data_katalog}\n\n"
         "ATURAN WAJIB:\n"
         "1. DILARANG memakai tag HTML seperti <br>.\n"
-        "2. Jika pengunjung menanyakan tempat wisata/destinasi yang TIDAK ADA di 'DAFTAR PRODUK RESMI GO ADVENTURE SAAT INI', tetap berikan penjelasan informatif singkat tentang tempat tersebut, lalu tutup di baris akhir dengan kalimat minta maaf karena Go Adventure belum mempunyai layanan tersebut.\n"  
+        "2. Jika pengunjung menanyakan tempat wisata/destinasi yang TIDAK ADA di 'DAFTAR PRODUK RESMI GO ADVENTURE SAAT INI', tetap berikan penjelasan informatif singkat tentang tempat tersebut, lalu tutup di baris akhir dengan kalimat minta maaf karena Go Adventure belum mempunyai layanan tersebut.\n"
         "3. Jika produk MEMANG ADA di daftar resmi di atas, sebutkan nama, lokasi, dan harganya.\n"
         "4. Info Go Adventure: Open Trip ≥5 orang diskon Rp 100.000. Tiket Mandiri berlaku 30 hari. Bayar via QRIS. CS WA: +6283105717926."
     )
@@ -92,7 +93,7 @@ def stream_groq_ai(riwayat_chat, koneksi_db):
     for msg in riwayat_chat[-6:]:
         messages_payload.append({"role": msg["role"], "content": msg["content"]})
 
-  model_aktif = dapatkan_model_aktif(key)
+    model_aktif = dapatkan_model_aktif(key)
 
     try:
         with requests.post(
@@ -160,13 +161,11 @@ def tampilkan_chatbot_mengambang(koneksi_db):
         'background: linear-gradient(135deg, #43A047, #1B5E20) !important;'
     )
 
-    # Render tombol logo di pojok kiri bawah
     st.markdown('<div id="marker-tombol-ai"></div>', unsafe_allow_html=True)
     if st.button("AI", key="btn_floating_ai_logo", help="Buka Asisten AI Go Adventure"):
         st.session_state.chat_open = not st.session_state.chat_open
         st.rerun(scope="fragment")
 
-    # Render jendela chat jika tombol diklik
     if st.session_state.chat_open:
         st.markdown('<div id="marker-jendela-ai"></div>', unsafe_allow_html=True)
         with st.container(border=True):
@@ -185,7 +184,6 @@ def tampilkan_chatbot_mengambang(koneksi_db):
                     st.session_state.chat_open = False
                     st.rerun(scope="fragment")
 
-            # Area Chat
             st.markdown('<div id="marker-area-chat"></div>', unsafe_allow_html=True)
             if st.session_state.chat_expanded:
                 chat_area = st.container(border=False)
@@ -198,7 +196,6 @@ def tampilkan_chatbot_mengambang(koneksi_db):
                         konten_bersih = re.sub(r"<br\s*/?>", "\n", msg["content"], flags=re.IGNORECASE)
                         st.markdown(konten_bersih)
 
-            # Form Input di bagian bawah card
             with st.form(key="form_kirim_pesan_ai", clear_on_submit=True):
                 rasio_form = [5.2, 1.0] if st.session_state.chat_expanded else [3.4, 1.3]
                 col_in, col_btn = st.columns(rasio_form)
