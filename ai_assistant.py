@@ -3,21 +3,27 @@ import streamlit.components.v1 as components
 import base64
 import os
 import re
+import json
 import requests
 
 # ==========================================
 # KONFIGURASI API KEY GROQ
 # ==========================================
-GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
+def get_groq_api_key():
+    return st.secrets.get("GROQ_API_KEY", "").strip()
+
+@st.cache_data(ttl=3600)
 def get_base64_image(image_path):
     if os.path.exists(image_path):
         with open(image_path, "rb") as img_file:
             return base64.b64encode(img_file.read()).decode()
     return None
 
-def ambil_konteks_wisata(koneksi_db):
+# Cache data katalog wisata selama 5 menit agar AI tidak query MySQL tiap kali chat
+@st.cache_data(ttl=300)
+def ambil_konteks_wisata(_koneksi_db):
     try:
-        conn = koneksi_db()
+        conn = _koneksi_db()
         cursor = conn.cursor(dictionary=True)
         cursor.execute("SELECT kategori, jenis_alam, nama, harga, kota_pulau, provinsi, jadwal, deskripsi_singkat, fasilitas FROM katalog")
         data = cursor.fetchall()
@@ -27,7 +33,7 @@ def ambil_konteks_wisata(koneksi_db):
             return "Belum ada paket wisata yang terdaftar di katalog Go Adventure."
         teks = "DAFTAR PRODUK RESMI GO ADVENTURE SAAT INI:\n"
         for d in data:
-            fas = d.get("fasilitas", "").replace("\n", ", ")
+            fas = (d.get("fasilitas") or "").replace("\n", ", ")
             teks += (
                 f"- [{d['kategori']} - {d['jenis_alam']}] {d['nama']} | "
                 f"Lokasi: {d['kota_pulau']}, {d['provinsi']} | "
@@ -38,45 +44,20 @@ def ambil_konteks_wisata(koneksi_db):
     except Exception:
         return "Data katalog sedang tidak dapat diakses."
 
-def dapatkan_model_chat_aktif(api_key):
-    kandidat_utama = [
-        "llama-3.3-70b-versatile",
-        "llama-3.1-8b-instant",
-        "openai/gpt-oss-20b",
-        "qwen/qwen3-32b"
-    ]
-    try:
-        res = requests.get(
-            "https://api.groq.com/openai/v1/models",
-            headers={"Authorization": f"Bearer {api_key}"},
-            timeout=10
-        )
-        if res.status_code == 200:
-            daftar_api = [m["id"] for m in res.json().get("data", [])]
-            for model in kandidat_utama:
-                if model in daftar_api:
-                    return model
-            kata_terlarang = ["whisper", "orpheus", "guard", "tts", "audio", "vision", "embed"]
-            for m_id in daftar_api:
-                if not any(bad in m_id.lower() for bad in kata_terlarang):
-                    return m_id
-    except Exception:
-        pass
-    return "llama-3.1-8b-instant"
-
-def tanya_groq_ai(riwayat_chat, koneksi_db):
-    key = GROQ_API_KEY.strip()
+def stream_groq_ai(riwayat_chat, koneksi_db):
+    key = get_groq_api_key()
     if not key or "MASUKKAN_API_KEY" in key:
-        return "⚠️ API Key Groq belum dimasukkan di `ai_assistant.py`."
+        yield "⚠️ API Key Groq belum diatur di Streamlit Secrets (`GROQ_API_KEY`)."
+        return
 
     data_katalog = ambil_konteks_wisata(koneksi_db)
     sistem_prompt = (
         "Kamu adalah asisten AI ramah untuk platform wisata alam 'Go Adventure'. "
-        "Jawablah setiap pertanyaan dalam Bahasa Indonesia dengan SINGKAT, PADAT, dan JELA. Jangan bertele-tele dan jangan membuat tabel terlalu panjang.\n\n"
+        "Jawablah setiap pertanyaan dalam Bahasa Indonesia dengan SINGKAT, PADAT, dan JELAS. Jangan bertele-tele dan jangan membuat tabel terlalu panjang.\n\n"
         f"{data_katalog}\n\n"
         "ATURAN WAJIB:\n"
         "1. DILARANG memakai tag HTML seperti <br>.\n"
-        "2. Jika pengunjung menanyakan tempat wisata/destinasi (misalnya curug di Sumatera atau tempat lain) yang TIDAK ADA di 'DAFTAR PRODUK RESMI GO ADVENTURE SAAT INI', tetap berikan penjelasan informatif tentang tempat tersebut, lalu tutup di baris akhir dengan kalimat minta maaf karena go adventure belum mempunyai layanan tersebut:\n"  
+        "2. Jika pengunjung menanyakan tempat wisata/destinasi yang TIDAK ADA di 'DAFTAR PRODUK RESMI GO ADVENTURE SAAT INI', tetap berikan penjelasan informatif singkat tentang tempat tersebut, lalu tutup di baris akhir dengan kalimat minta maaf karena Go Adventure belum mempunyai layanan tersebut.\n"  
         "3. Jika produk MEMANG ADA di daftar resmi di atas, sebutkan nama, lokasi, dan harganya.\n"
         "4. Info Go Adventure: Open Trip ≥5 orang diskon Rp 100.000. Tiket Mandiri berlaku 30 hari. Bayar via QRIS. CS WA: +6283105717926."
     )
@@ -85,32 +66,52 @@ def tanya_groq_ai(riwayat_chat, koneksi_db):
     for msg in riwayat_chat[-6:]:
         messages_payload.append({"role": msg["role"], "content": msg["content"]})
 
-    model_aktif = dapatkan_model_chat_aktif(key)
-
     try:
-        response = requests.post(
+        # Langsung panggil model cepat dengan mode stream=True (tanpa request GET /models lagi)
+        with requests.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={
                 "Authorization": f"Bearer {key}",
                 "Content-Type": "application/json"
             },
             json={
-                "model": model_aktif,
+                "model": "llama-3.1-8b-instant",
                 "messages": messages_payload,
-                "temperature": 0.7,
-                "max_tokens": 2048
+                "temperature": 0.6,
+                "max_tokens": 800,
+                "stream": True
             },
-            timeout=20
-        )
-        if response.status_code == 200:
-            teks_balasan = response.json()["choices"][0]["message"]["content"]
-            # Bersihkan tag <br> jika AI masih tidak sengaja menulisnya
-            teks_balasan = re.sub(r"<br\s*/?>", "\n", teks_balasan, flags=re.IGNORECASE)
-            return teks_balasan
-        else:
-            return f"⚠️ Error Groq ({response.status_code}): {response.text}"
+            stream=True,
+            timeout=12
+        ) as response:
+            if response.status_code != 200:
+                err_text = response.text
+                if response.status_code == 401:
+                    yield "⚠️ Error Groq (401): API Key tidak valid atau kedaluwarsa. Harap perbarui `GROQ_API_KEY` di Streamlit Secrets."
+                else:
+                    yield f"⚠️ Error Groq ({response.status_code}): {err_text}"
+                return
+
+            for line in response.iter_lines():
+                if line:
+                    decoded = line.decode("utf-8")
+                    if decoded.startswith("data: "):
+                        data_str = decoded[6:].strip()
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data_str)
+                            delta = chunk["choices"][0].get("delta", {})
+                            konten = delta.get("content", "")
+                            if konten:
+                                konten = re.sub(r"<br\s*/?>", "\n", konten, flags=re.IGNORECASE)
+                                yield konten
+                        except json.JSONDecodeError:
+                            continue
+    except requests.exceptions.Timeout:
+        yield "⚠️ Koneksi ke server AI melebihi batas waktu (timeout). Silakan coba kirim ulang."
     except Exception as e:
-        return f"⚠️ Gagal terhubung ke internet: {e}"
+        yield f"⚠️ Gagal terhubung ke server AI: {e}"
 
 def tampilkan_chatbot_mengambang(koneksi_db):
     if "chat_open" not in st.session_state:
@@ -136,13 +137,12 @@ def tampilkan_chatbot_mengambang(koneksi_db):
     st.markdown('<div id="marker-tombol-ai"></div>', unsafe_allow_html=True)
     if st.button("AI", key="btn_floating_ai_logo", help="Buka Asisten AI Go Adventure"):
         st.session_state.chat_open = not st.session_state.chat_open
-        st.rerun()
+        st.rerun(scope="fragment")
 
     # Render jendela chat jika tombol diklik
     if st.session_state.chat_open:
         st.markdown('<div id="marker-jendela-ai"></div>', unsafe_allow_html=True)
         with st.container(border=True):
-            # Proporsi kolom header agar ikon tidak kepotong di mode kecil maupun besar
             rasio_hdr = [6.2, 0.7, 0.7] if st.session_state.chat_expanded else [3.4, 1.1, 1.1]
             c_title, c_expand, c_close = st.columns(rasio_hdr)
             with c_title:
@@ -152,11 +152,11 @@ def tampilkan_chatbot_mengambang(koneksi_db):
                 tip_zoom = "Perkecil jendela" if st.session_state.chat_expanded else "Perbesar hampir full layar"
                 if st.button(ikon_zoom, key="btn_expand_ai_win", help=tip_zoom, use_container_width=True):
                     st.session_state.chat_expanded = not st.session_state.chat_expanded
-                    st.rerun()
+                    st.rerun(scope="fragment")
             with c_close:
                 if st.button("✖", key="btn_close_ai_win", help="Tutup chat", use_container_width=True):
                     st.session_state.chat_open = False
-                    st.rerun()
+                    st.rerun(scope="fragment")
 
             # Area Chat
             st.markdown('<div id="marker-area-chat"></div>', unsafe_allow_html=True)
@@ -168,7 +168,6 @@ def tampilkan_chatbot_mengambang(koneksi_db):
             with chat_area:
                 for msg in st.session_state.chat_messages:
                     with st.chat_message(msg["role"]):
-                        # Pastikan pesan lama yang terlanjur ada <br> juga bersih
                         konten_bersih = re.sub(r"<br\s*/?>", "\n", msg["content"], flags=re.IGNORECASE)
                         st.markdown(konten_bersih)
 
@@ -182,10 +181,14 @@ def tampilkan_chatbot_mengambang(koneksi_db):
                     submit = st.form_submit_button("Kirim", type="primary", use_container_width=True)
 
             if submit and prompt.strip():
-                st.session_state.chat_messages.append({"role": "user", "content": prompt.strip()})
-                jawaban = tanya_groq_ai(st.session_state.chat_messages, koneksi_db)
-                st.session_state.chat_messages.append({"role": "assistant", "content": jawaban})
-                st.rerun()
+                pesan_user = prompt.strip()
+                st.session_state.chat_messages.append({"role": "user", "content": pesan_user})
+                with chat_area:
+                    with st.chat_message("user"):
+                        st.markdown(pesan_user)
+                    with st.chat_message("assistant"):
+                        jawaban_lengkap = st.write_stream(stream_groq_ai(st.session_state.chat_messages, koneksi_db))
+                st.session_state.chat_messages.append({"role": "assistant", "content": jawaban_lengkap})
 
     is_expanded_js = "true" if st.session_state.chat_expanded else "false"
 
@@ -194,7 +197,6 @@ def tampilkan_chatbot_mengambang(koneksi_db):
         const doc = window.parent.document;
         const isExpanded = {is_expanded_js};
 
-        // 1. Kunci posisi tombol logo AI di pojok kiri bawah
         const markerBtn = doc.getElementById('marker-tombol-ai');
         if (markerBtn) {{
             const wrapperBtn = markerBtn.closest('[data-testid="stElementContainer"]').nextElementSibling;
@@ -224,7 +226,6 @@ def tampilkan_chatbot_mengambang(koneksi_db):
             }}
         }}
 
-        // 2. Kunci posisi, ukuran, dan tombol header jendela chat
         const markerWin = doc.getElementById('marker-jendela-ai');
         if (markerWin) {{
             const wrapperWin = markerWin.closest('[data-testid="stElementContainer"]').nextElementSibling;
@@ -263,7 +264,6 @@ def tampilkan_chatbot_mengambang(koneksi_db):
                     `;
                 }}
 
-                // Rapikan tombol Perbesar & Tutup agar ikon tidak terpotong
                 const headerBtns = wrapperWin.querySelectorAll('[data-testid="stHorizontalBlock"]:first-of-type button');
                 headerBtns.forEach((b) => {{
                     b.style.padding = '4px 0px';
@@ -287,7 +287,6 @@ def tampilkan_chatbot_mengambang(koneksi_db):
             }}
         }}
 
-        // 3. Area chat scrollable di dalam card
         const markerChat = doc.getElementById('marker-area-chat');
         if (markerChat && isExpanded) {{
             const chatBox = markerChat.closest('[data-testid="stElementContainer"]').nextElementSibling;
